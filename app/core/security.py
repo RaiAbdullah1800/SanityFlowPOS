@@ -3,12 +3,16 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 import os
 from typing import Optional
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = os.getenv("JWT_SECRET", "supersecret")  # fallback
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 days
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 # Generate a random secret for refresh tokens
 def generate_refresh_token_secret():
@@ -58,3 +62,21 @@ def refresh_access_token(refresh_token: str, user_id: str):
         })
     except JWTError:
         raise JWTError("Invalid refresh token")
+
+async def validate_admin(token: str = Depends(oauth2_scheme)):
+    """Validate that the token belongs to an admin user"""
+    try:
+        payload = verify_token(token)
+        if "admin" not in payload.get("scope", []):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return payload
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
