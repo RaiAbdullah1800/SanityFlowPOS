@@ -9,9 +9,6 @@ import enum
 
 from .db import Base
 
-import uuid
-
-
 class UserRole(enum.Enum):
     admin = "admin"
     cashier = "cashier"
@@ -50,6 +47,7 @@ class ItemSize(Base):
     size_label = Column(String(20))  # e.g., Small, Medium, Large
     price = Column(Float, nullable=False)
     discount = Column(Float, nullable=True)  # Optional
+    stock = Column(Integer, default=0, nullable=False)  # Add stock column
     created_at = Column(DateTime, server_default=func.now())
 
     item = relationship("Item", back_populates="sizes")
