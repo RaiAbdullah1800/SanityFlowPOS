@@ -1,0 +1,106 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+# Usually these files are written by a python script from a template
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# VSCode and IDE settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Test and coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# FastAPI / Uvicorn specific
+*.log
+logs/
+gunicorn.pid
+uvicorn.log
+
+# Local SQLite database
+*.db
+*.sqlite3
+
+# Migrations (if using Alembic)
+alembic.ini
+migrations/versions/
+
+# Environment variables and secrets
+.env
+.env.*
+*.secret
+secrets.yaml
+
+# Docker
+*.pid
+*.seed
+*.bak
+docker-compose.override.yml
+docker-compose.dev.yml
+Dockerfile.dev
+
+# MyPy, Pylint, Flake8, Black, Ruff
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+pylint-report.txt
+.flake8
+.cache/
+.ruff_cache/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
