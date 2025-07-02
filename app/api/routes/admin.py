@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional, Dict
 from datetime import datetime
 from pydantic import BaseModel, HttpUrl, conint, validator
+import uuid
+import os
+from fastapi.encoders import jsonable_encoder
+import json
 
 from app.db.db import get_db
 from app.db.models import (
@@ -11,6 +15,12 @@ from app.db.models import (
     Order, OrderItem, User, UserRole
 )
 from app.core.security import validate_admin
+from app.db.supabase_client import supabase
+
+# Constants for file validation
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
+ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/jpg", "image/webp"]
+STORAGE_BUCKET = "item-images"  # Supabase storage bucket name
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -23,9 +33,13 @@ class ItemSizeCreate(BaseModel):
 
 class ItemCreate(BaseModel):
     name: str
-    image_url: Optional[HttpUrl]
     category: str
     sizes: List[ItemSizeCreate]  # Now requires at least one size
+
+    class Config:
+        json_encoders = {
+            List[ItemSizeCreate]: lambda v: [jsonable_encoder(size) for size in v]
+        }
 
 class ItemSizeResponse(ItemSizeCreate):
     id: str
@@ -67,7 +81,6 @@ class ItemUpdateSize(BaseModel):
 
 class ItemUpdate(BaseModel):
     name: Optional[str]
-    image_url: Optional[HttpUrl]
     category: Optional[str]
     sizes: List[ItemUpdateSize]  # Sizes to update or create
     sizes_to_delete: Optional[List[str]] = []  # List of size IDs to delete
@@ -82,54 +95,140 @@ class DateRangeFilter(BaseModel):
     start_date: Optional[datetime]
     end_date: Optional[datetime]
 
+# --- Helper Functions ---
+async def validate_image(file: UploadFile) -> None:
+    """Validate image file size and type"""
+    # Check file size
+    contents = await file.read()
+    await file.seek(0)  # Reset file pointer
+    
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File size exceeds maximum limit of {MAX_IMAGE_SIZE/1024/1024}MB"
+        )
+    
+    # Check file type
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"File type {file.content_type} not allowed. Allowed types: {', '.join(ALLOWED_IMAGE_TYPES)}"
+        )
+
+async def upload_image_to_supabase(file: UploadFile) -> str:
+    """Upload image to Supabase storage and return the public URL"""
+    try:
+        # Generate unique filename with safe extension handling
+        original_filename = file.filename or "upload.jpg"  # Default if filename is None
+        file_extension = os.path.splitext(original_filename)[1].lower()
+        if not file_extension:
+            file_extension = ".jpg"  # Default extension if none provided
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        
+        # Upload file to Supabase storage
+        contents = await file.read()
+        result = supabase.storage.from_(STORAGE_BUCKET).upload(
+            unique_filename,
+            contents
+        )
+        
+        # Get public URL
+        public_url = supabase.storage.from_(STORAGE_BUCKET).get_public_url(unique_filename)
+        return public_url
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}"
+        )
+    finally:
+        await file.close()
+
 # --- Item Management ---
 @router.post("/add-items/", status_code=status.HTTP_201_CREATED, response_model=ItemResponse)
 async def add_item(
-    item: ItemCreate,
+    image: UploadFile = File(...),
+    item_data: str = Form(...),
     db: Session = Depends(get_db),
     token: dict = Depends(validate_admin)
 ):
-    # Get the performing user
-    username = token.get("sub")
-    user = db.query(User).filter(User.username == username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Performing user not found")
-
-    # Create the item
-    db_item = Item(
-        name=item.name,
-        image_url=item.image_url,
-        category=item.category
-    )
-    db.add(db_item)
-    db.flush()  # Flush to get the item ID but don't commit yet
-
-    # Create all sizes for the item
-    for size in item.sizes:
-        db_size = ItemSize(
-            item_id=db_item.id,
-            size_label=size.size_label,
-            price=size.price,
-            discount=size.discount,
-            stock=size.stock
-        )
-        db.add(db_size)
-
-        # If initial stock is provided, create inventory history entry
-        if size.stock > 0:
-            history = InventoryHistory(
-                item_id=db_item.id,
-                change=size.stock,
-                type=InventoryChangeType.restock,
-                description="Initial stock",
-                performed_by_id=user.id
+    """
+    Add a new item with image upload.
+    
+    - The image file will be validated and uploaded to Supabase storage
+    - Item data should be provided as a JSON string in Form data
+    - Returns the created item with all its details
+    """
+    try:
+        # Parse item data from JSON string
+        try:
+            item = ItemCreate(**json.loads(item_data))
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON format in item_data"
             )
-            db.add(history)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
 
-    # Now commit everything together
-    db.commit()
-    db.refresh(db_item)
-    return db_item
+        # Get the performing user
+        username = token.get("sub")
+        user = db.query(User).filter(User.username == username).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Performing user not found")
+
+        # Validate and upload image
+        await validate_image(image)
+        image_url = await upload_image_to_supabase(image)
+
+        # Create the item with the image URL
+        db_item = Item(
+            name=item.name,
+            image_url=image_url,
+            category=item.category
+        )
+        db.add(db_item)
+        db.flush()  # Flush to get the item ID but don't commit yet
+
+        # Create all sizes for the item
+        for size in item.sizes:
+            db_size = ItemSize(
+                item_id=db_item.id,
+                size_label=size.size_label,
+                price=size.price,
+                discount=size.discount,
+                stock=size.stock
+            )
+            db.add(db_size)
+
+            # If initial stock is provided, create inventory history entry
+            if size.stock > 0:
+                history = InventoryHistory(
+                    item_id=db_item.id,
+                    change=size.stock,
+                    type=InventoryChangeType.restock,
+                    description="Initial stock",
+                    performed_by_id=user.id
+                )
+                db.add(history)
+
+        # Now commit everything together
+        db.commit()
+        db.refresh(db_item)
+        return db_item
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # If anything fails, ensure the transaction is rolled back
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create item: {str(e)}"
+        )
 
 @router.get("/items/{item_id}", response_model=ItemResponse)
 async def get_item(
@@ -155,116 +254,148 @@ async def list_items(
 @router.patch("/items/{item_id}", response_model=ItemResponse)
 async def update_item(
     item_id: str,
-    item_update: ItemUpdate,
+    image: Optional[UploadFile] = File(None),
+    item_data: str = Form(...),
     db: Session = Depends(get_db),
     token: dict = Depends(validate_admin)
 ):
-    """Update an item's details, including its sizes. Can update item info, update existing sizes,
-    add new sizes, and delete sizes all in one request. When updating stock, a correction reason
-    must be provided to explain the adjustment."""
-    
-    # Get the performing user
-    username = token.get("sub")
-    user = db.query(User).filter(User.username == username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Performing user not found")
+    """Update an item's details, including its image, sizes, etc."""
+    try:
+        # Parse item update data from JSON string
+        try:
+            item_update = ItemUpdate(**json.loads(item_data))
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON format in item_data"
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
 
-    # First verify the item exists
-    db_item = db.query(Item).filter(Item.id == item_id).first()
-    if not db_item:
-        raise HTTPException(status_code=404, detail="Item not found")
+        # Get the performing user
+        username = token.get("sub")
+        user = db.query(User).filter(User.username == username).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Performing user not found")
 
-    # Update basic item information
-    if item_update.name is not None:
-        db_item.name = item_update.name
-    if item_update.image_url is not None:
-        db_item.image_url = item_update.image_url
-    if item_update.category is not None:
-        db_item.category = item_update.category
+        # First verify the item exists
+        db_item = db.query(Item).filter(Item.id == item_id).first()
+        if not db_item:
+            raise HTTPException(status_code=404, detail="Item not found")
 
-    # Handle size updates and additions
-    existing_sizes = {size.id: size for size in db_item.sizes}
-    
-    for size_update in item_update.sizes:
-        if size_update.id:  # Update existing size
-            if size_update.id not in existing_sizes:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Size with id {size_update.id} not found for this item"
+        # Handle image update if provided
+        if image:
+            await validate_image(image)
+            image_url = await upload_image_to_supabase(image)
+            db_item.image_url = image_url
+
+        # Update basic item information
+        if item_update.name is not None:
+            db_item.name = item_update.name
+        if item_update.category is not None:
+            db_item.category = item_update.category
+
+        # Handle size updates and additions
+        existing_sizes = {size.id: size for size in db_item.sizes}
+        
+        for size_update in item_update.sizes:
+            if size_update.id:  # Update existing size
+                if size_update.id not in existing_sizes:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Size with id {size_update.id} not found for this item"
+                    )
+                db_size = existing_sizes[size_update.id]
+                
+                # Calculate stock change if stock is being updated
+                if size_update.stock is not None:
+                    stock_change = size_update.stock - db_size.stock
+                    if stock_change != 0:
+                        # For large corrections (more than 20% change), add a warning to the description
+                        stock_change_percentage = abs(stock_change) / db_size.stock * 100 if db_size.stock > 0 else 100
+                        description = f"Correction: {size_update.correction_reason}"
+                        if stock_change_percentage > 20:
+                            description = f"LARGE ADJUSTMENT ({stock_change_percentage:.1f}% change) - {description}"
+
+                        history = InventoryHistory(
+                            item_id=item_id,
+                            change=stock_change,
+                            type=InventoryChangeType.correction,
+                            description=description,
+                            performed_by_id=user.id
+                        )
+                        db.add(history)
+                    db_size.stock = size_update.stock
+
+                # Update other fields
+                db_size.size_label = size_update.size_label
+                db_size.price = size_update.price
+                if size_update.discount is not None:
+                    db_size.discount = size_update.discount
+
+            else:  # Add new size
+                new_size = ItemSize(
+                    item_id=item_id,
+                    size_label=size_update.size_label,
+                    price=size_update.price,
+                    discount=size_update.discount,
+                    stock=size_update.stock or 0
                 )
-            db_size = existing_sizes[size_update.id]
-            
-            # Calculate stock change if stock is being updated
-            if size_update.stock is not None:
-                stock_change = size_update.stock - db_size.stock
-                if stock_change != 0:
-                    # For large corrections (more than 20% change), add a warning to the description
-                    stock_change_percentage = abs(stock_change) / db_size.stock * 100 if db_size.stock > 0 else 100
-                    description = f"Correction: {size_update.correction_reason}"
-                    if stock_change_percentage > 20:
-                        description = f"LARGE ADJUSTMENT ({stock_change_percentage:.1f}% change) - {description}"
+                db.add(new_size)
 
+                # Create inventory history for initial stock
+                if size_update.stock and size_update.stock > 0:
                     history = InventoryHistory(
                         item_id=item_id,
-                        change=stock_change,
-                        type=InventoryChangeType.correction,
-                        description=description,
+                        change=size_update.stock,
+                        type=InventoryChangeType.restock,
+                        description="Initial stock for new size",
                         performed_by_id=user.id
                     )
                     db.add(history)
-                db_size.stock = size_update.stock
 
-            # Update other fields
-            db_size.size_label = size_update.size_label
-            db_size.price = size_update.price
-            if size_update.discount is not None:
-                db_size.discount = size_update.discount
+        # Handle size deletions
+        if item_update.sizes_to_delete:
+            for size_id in item_update.sizes_to_delete:
+                if size_id not in existing_sizes:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot delete size {size_id}: not found"
+                    )
+                # Record the deletion in inventory history if there was stock
+                size_to_delete = existing_sizes[size_id]
+                if size_to_delete.stock > 0:
+                    history = InventoryHistory(
+                        item_id=item_id,
+                        change=-size_to_delete.stock,  # Negative change to remove all stock
+                        type=InventoryChangeType.correction,
+                        description=f"Stock removed due to size deletion: {size_to_delete.size_label}",
+                        performed_by_id=user.id
+                    )
+                    db.add(history)
+                db.delete(size_to_delete)
 
-        else:  # Add new size
-            new_size = ItemSize(
-                item_id=item_id,
-                size_label=size_update.size_label,
-                price=size_update.price,
-                discount=size_update.discount,
-                stock=size_update.stock or 0
+        try:
+            db.commit()
+            db.refresh(db_item)
+            return db_item
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update item: {str(e)}"
             )
-            db.add(new_size)
 
-            # Create inventory history for initial stock
-            if size_update.stock and size_update.stock > 0:
-                history = InventoryHistory(
-                    item_id=item_id,
-                    change=size_update.stock,
-                    type=InventoryChangeType.restock,
-                    description="Initial stock for new size",
-                    performed_by_id=user.id
-                )
-                db.add(history)
-
-    # Handle size deletions
-    if item_update.sizes_to_delete:
-        for size_id in item_update.sizes_to_delete:
-            if size_id not in existing_sizes:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot delete size {size_id}: not found"
-                )
-            # Record the deletion in inventory history if there was stock
-            size_to_delete = existing_sizes[size_id]
-            if size_to_delete.stock > 0:
-                history = InventoryHistory(
-                    item_id=item_id,
-                    change=-size_to_delete.stock,  # Negative change to remove all stock
-                    type=InventoryChangeType.correction,
-                    description=f"Stock removed due to size deletion: {size_to_delete.size_label}",
-                    performed_by_id=user.id
-                )
-                db.add(history)
-            db.delete(size_to_delete)
-
-    db.commit()
-    db.refresh(db_item)
-    return db_item
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process update: {str(e)}"
+        )
 
 @router.post("/inventory/restock/")
 async def restock_item(
@@ -352,4 +483,53 @@ async def get_users(
     db: Session = Depends(get_db),
     _: dict = Depends(validate_admin)
 ):
-    return db.query(User).all() 
+    return db.query(User).all()
+
+@router.delete("/items/{item_id}/image", status_code=status.HTTP_200_OK)
+async def delete_item_image(
+    item_id: str,
+    db: Session = Depends(get_db),
+    token: dict = Depends(validate_admin)
+):
+    """Delete an item's image from both Supabase storage and database"""
+    try:
+        # Get the item from the database
+        db_item = db.query(Item).filter(Item.id == item_id).first()
+        if not db_item:
+            raise HTTPException(status_code=404, detail="Item not found")
+
+        if not db_item.image_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Item does not have an image to delete"
+            )
+
+        try:
+            # Extract path after bucket name (supports nested paths)
+            if f"{STORAGE_BUCKET}/" not in db_item.image_url:
+                raise ValueError("Invalid image URL format")
+
+            file_path = db_item.image_url.split(f"{STORAGE_BUCKET}/")[-1].split("?")[0]
+
+
+            # Try to delete from Supabase storage
+            delete_response = supabase.storage.from_(STORAGE_BUCKET).remove([file_path])
+
+
+        except Exception as e:
+            print(f"Warning: Failed to delete image from storage: {str(e)}")
+
+        # Remove image from DB
+        db_item.image_url = None
+        db.commit()
+
+        return {"message": "Image deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete image: {str(e)}"
+        )
