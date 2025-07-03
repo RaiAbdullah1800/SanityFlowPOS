@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
-
+from fastapi import Header
+from jose import JWTError
 from app.db.db import get_db
 from app.db.models import User, UserRole
 from app.core.security import (
@@ -33,8 +34,35 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    role: str 
 
 # --- Routes ---
+
+
+@router.get("/verify-token")
+def verify_user_token(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing or malformed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token = authorization.split(" ")[1]
+
+    try:
+        payload = verify_token(token, token_type="access")  # or just "access"
+        
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    role_list = payload.get("scope", [])
+    role = role_list[0] if isinstance(role_list, list) and role_list else None
+    return {"message": "Token is valid", "role": role}
+
 @router.post("/signup", response_model=TokenResponse)
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == payload.username).first():
@@ -52,7 +80,8 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     role_str = user.role.value
     access = create_access_token({"sub": user.username, "scope": [role_str]})
     refresh = create_refresh_token({"sub": user.username, "scope": [role_str]})
-    return {"access_token": access, "refresh_token": refresh}
+    return {"access_token": access, "refresh_token": refresh, "role": role_str}
+
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
@@ -67,7 +96,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     role_str = user.role.value
     access = create_access_token({"sub": user.username, "scope": [role_str]})
     refresh = create_refresh_token({"sub": user.username, "scope": [role_str]})
-    return {"access_token": access, "refresh_token": refresh}
+    return {"access_token": access, "refresh_token": refresh , "role": role_str  }
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_tokens(payload: RefreshRequest, db: Session = Depends(get_db)):
