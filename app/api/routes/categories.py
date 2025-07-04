@@ -39,15 +39,13 @@ def create_category(
 
 @router.get("/", response_model=List[CategoryResponse])
 def list_categories(
-    skip: int = 0,
-    limit: int = 100,
     db: Session = Depends(get_db),
     _: dict = Depends(validate_admin)
 ):
     """
-    List all categories with pagination.
+    List all categories.
     """
-    categories = db.query(Category).offset(skip).limit(limit).all()
+    categories = db.query(Category).all()
     return categories
 
 @router.get("/{category_id}", response_model=CategoryWithItems)
