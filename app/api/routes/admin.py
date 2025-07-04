@@ -1,9 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import List, Optional, Dict
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_
+from typing import List, Optional, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, HttpUrl, conint, validator
 import uuid
 import os
 from fastapi.encoders import jsonable_encoder
@@ -12,10 +11,15 @@ import json
 from app.db.db import get_db
 from app.db.models import (
     Item, ItemSize, InventoryHistory, InventoryChangeType,
-    Order, OrderItem, User, UserRole
+    Order, OrderItem, User, UserRole, Category
 )
 from app.core.security import validate_admin
 from app.db.supabase_client import supabase
+from app.api.schemas.item import (
+    ItemCreate, ItemResponse, ItemUpdate, ItemSizeCreate, ItemSizeUpdate,
+    RestockRequest, DateRangeFilter, ItemSizeResponse
+)
+from app.api.schemas.category import CategoryResponse
 
 # Constants for file validation
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -24,76 +28,7 @@ STORAGE_BUCKET = "item-images"  # Supabase storage bucket name
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
-# --- Pydantic Models ---
-class ItemSizeCreate(BaseModel):
-    size_label: str
-    price: float
-    discount: Optional[float] = None
-    stock: conint(ge=0) = 0  # Initial stock, must be >= 0
-
-class ItemCreate(BaseModel):
-    name: str
-    category: str
-    sizes: List[ItemSizeCreate]  # Now requires at least one size
-
-    class Config:
-        json_encoders = {
-            List[ItemSizeCreate]: lambda v: [jsonable_encoder(size) for size in v]
-        }
-
-class ItemSizeResponse(ItemSizeCreate):
-    id: str
-    item_id: str
-    created_at: datetime
-
-    class Config:
-        orm_mode = True
-
-class ItemResponse(BaseModel):
-    id: str
-    name: str
-    image_url: Optional[HttpUrl]
-    category: str
-    created_at: datetime
-    sizes: List[ItemSizeResponse]
-
-    class Config:
-        orm_mode = True
-
-class ItemSizeUpdate(BaseModel):
-    size_label: Optional[str]
-    price: Optional[float]
-    discount: Optional[float]
-
-class ItemUpdateSize(BaseModel):
-    id: Optional[str]  # If provided, update existing size. If None, create new size
-    size_label: str
-    price: float
-    discount: Optional[float] = None
-    stock: Optional[conint(ge=0)] = None  # Optional stock update, must be >= 0 if provided
-    correction_reason: Optional[str] = None  # Required if stock is being changed
-
-    @validator('correction_reason')
-    def validate_correction_reason(cls, v, values):
-        if 'stock' in values and values['stock'] is not None and not v:
-            raise ValueError('correction_reason is required when updating stock')
-        return v
-
-class ItemUpdate(BaseModel):
-    name: Optional[str]
-    category: Optional[str]
-    sizes: List[ItemUpdateSize]  # Sizes to update or create
-    sizes_to_delete: Optional[List[str]] = []  # List of size IDs to delete
-
-class RestockRequest(BaseModel):
-    item_id: str
-    size_label: str
-    quantity: conint(gt=0)  # Must be positive
-    description: Optional[str]
-
-class DateRangeFilter(BaseModel):
-    start_date: Optional[datetime]
-    end_date: Optional[datetime]
+# Import models and schemas
 
 # --- Helper Functions ---
 async def validate_image(file: UploadFile) -> None:
@@ -162,7 +97,8 @@ async def add_item(
     try:
         # Parse item data from JSON string
         try:
-            item = ItemCreate(**json.loads(item_data))
+            item_data_dict = json.loads(item_data)
+            item = ItemCreate(**item_data_dict)
         except json.JSONDecodeError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -174,6 +110,15 @@ async def add_item(
                 detail=str(e)
             )
 
+        # Check if category exists if provided
+        if item.category_id:
+            category = db.query(Category).filter(Category.id == item.category_id).first()
+            if not category:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Category with ID {item.category_id} not found"
+                )
+
         # Get the performing user
         username = token.get("sub")
         user = db.query(User).filter(User.username == username).first()
@@ -184,11 +129,11 @@ async def add_item(
         await validate_image(image)
         image_url = await upload_image_to_supabase(image)
 
-        # Create the item with the image URL
+        # Create the item with the image URL and category
         db_item = Item(
             name=item.name,
             image_url=image_url,
-            category=item.category
+            category_id=item.category_id
         )
         db.add(db_item)
         db.flush()  # Flush to get the item ID but don't commit yet
@@ -231,27 +176,46 @@ async def add_item(
         )
 
 @router.get("/items/{item_id}", response_model=ItemResponse)
-async def get_item(
+def get_item(
     item_id: str,
     db: Session = Depends(get_db),
     _: dict = Depends(validate_admin)
 ):
-    """Get detailed information about a specific item including all its sizes"""
-    item = db.query(Item).filter(Item.id == item_id).first()
-    if not item:
+    """
+    Get detailed information about a specific item including all its sizes and category
+    """
+    db_item = db.query(Item).options(joinedload(Item.category_obj))\
+        .filter(Item.id == item_id).first()
+    if not db_item:
         raise HTTPException(status_code=404, detail="Item not found")
-    return item
+    return db_item
 
 @router.get("/items/", response_model=List[ItemResponse])
-async def list_items(
+def list_items(
+    category_id: Optional[str] = None,
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     _: dict = Depends(validate_admin)
 ):
-    """Get a list of all items with their sizes"""
-    items = db.query(Item).all()
+    """
+    Get a list of all items with their sizes and categories
+    
+    - category_id: Filter items by category
+    - search: Search term to filter items by name
+    """
+    query = db.query(Item).options(joinedload(Item.category_obj))
+    
+    if category_id:
+        query = query.filter(Item.category_id == category_id)
+    
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(Item.name.ilike(search_term))
+    
+    items = query.all()
     return items
 
-@router.patch("/items/{item_id}", response_model=ItemResponse)
+@router.put("/items/{item_id}", response_model=ItemResponse)
 async def update_item(
     item_id: str,
     image: Optional[UploadFile] = File(None),
@@ -261,20 +225,25 @@ async def update_item(
 ):
     """Update an item's details, including its image, sizes, etc."""
     try:
-        # Parse item update data from JSON string
+        # Parse item data from JSON string
         try:
-            item_update = ItemUpdate(**json.loads(item_data))
+            item_data_dict = json.loads(item_data)
+            item_update = ItemUpdate(**item_data_dict)
+            
+            # Check if category exists if provided
+            if item_update.category_id:
+                category = db.query(Category).filter(Category.id == item_update.category_id).first()
+                if not category:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Category with ID {item_update.category_id} not found"
+                    )
         except json.JSONDecodeError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid JSON format in item_data"
             )
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
-            )
-
+        
         # Get the performing user
         username = token.get("sub")
         user = db.query(User).filter(User.username == username).first()
@@ -292,11 +261,10 @@ async def update_item(
             image_url = await upload_image_to_supabase(image)
             db_item.image_url = image_url
 
-        # Update basic item information
-        if item_update.name is not None:
-            db_item.name = item_update.name
-        if item_update.category is not None:
-            db_item.category = item_update.category
+        # Update item fields
+        update_data = item_update.dict(exclude_unset=True, exclude={"sizes", "sizes_to_delete"})
+        for field, value in update_data.items():
+            setattr(db_item, field, value)
 
         # Handle size updates and additions
         existing_sizes = {size.id: size for size in db_item.sizes}

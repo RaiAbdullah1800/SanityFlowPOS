@@ -26,17 +26,28 @@ class User(Base):
     orders = relationship("Order", back_populates="cashier")
 
 
+class Category(Base):
+    __tablename__ = "categories"
+
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid4()))
+    name = Column(String(50), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    items = relationship("Item", back_populates="category_obj")
+
+
 class Item(Base):
     __tablename__ = "items"
 
     id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid4()))
     name = Column(String(100), nullable=False)
     image_url = Column(Text, nullable=True)
-    category = Column(String(50))
+    category_id = Column(CHAR(36), ForeignKey("categories.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     sizes = relationship("ItemSize", back_populates="item")
     inventory_histories = relationship("InventoryHistory", back_populates="item")
+    category_obj = relationship("Category", back_populates="items")
 
 
 class ItemSize(Base):
