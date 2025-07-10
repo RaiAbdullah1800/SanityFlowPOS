@@ -13,6 +13,7 @@ class ItemSizeCreate(ItemSizeBase):
     pass
 
 class ItemSizeUpdate(ItemSizeBase):
+    id: Optional[str] = None 
     size_label: Optional[str] = Field(None, min_length=1, max_length=20)
     price: Optional[float] = Field(None, gt=0)
     discount: Optional[float] = Field(None, ge=0)
