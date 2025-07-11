@@ -76,6 +76,24 @@ class ItemResponse(ItemBase):
             }
         return cls(**item_dict)
 
+class ItemListResponse(BaseModel):
+    id: str
+    name: str
+    category: Optional[Dict[str, Any]] = None
+    sizes: List[Dict[str, Any]]
+
+    class Config:
+        orm_mode = True
+        json_encoders = {
+            'datetime': lambda v: v.isoformat() if v else None
+        }
+
+class NewItemListResponse(BaseModel):
+    id: str
+    name: str
+    category: Optional[Dict[str, Any]] = None
+    sizes: List[Dict[str, Any]]
+
 class RestockRequest(BaseModel):
     item_id: str
     size_label: str

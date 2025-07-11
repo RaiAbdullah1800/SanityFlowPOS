@@ -1,6 +1,7 @@
 from sqlalchemy import (
     Column, String, Integer, Float, ForeignKey, DateTime, Enum, Text, JSON
 )
+from sqlalchemy import TIMESTAMP
 from sqlalchemy.dialects.mysql import CHAR, VARCHAR
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -21,7 +22,7 @@ class User(Base):
     username = Column(String(50), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), default=UserRole.cashier)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(TIMESTAMP, server_default=func.now())
     inventory_actions = relationship("InventoryHistory", back_populates="performed_by")
     orders = relationship("Order", back_populates="cashier")
 
@@ -31,7 +32,7 @@ class Category(Base):
 
     id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid4()))
     name = Column(String(50), nullable=False, unique=True, index=True)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(TIMESTAMP, server_default=func.now())
 
     items = relationship("Item", back_populates="category_obj")
 
@@ -43,7 +44,7 @@ class Item(Base):
     name = Column(String(100), nullable=False)
     image_url = Column(Text, nullable=True)
     category_id = Column(CHAR(36), ForeignKey("categories.id"), nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(TIMESTAMP, server_default=func.now())
 
     sizes = relationship("ItemSize", back_populates="item")
     inventory_histories = relationship("InventoryHistory", back_populates="item")
@@ -59,7 +60,7 @@ class ItemSize(Base):
     price = Column(Float, nullable=False)
     discount = Column(Float, nullable=True)  # Optional
     stock = Column(Integer, default=0, nullable=False)  # Add stock column
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(TIMESTAMP, server_default=func.now())
 
     item = relationship("Item", back_populates="sizes")
 
@@ -69,7 +70,7 @@ class Order(Base):
 
     id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid4()))
     transaction_id = Column(String(100), unique=True, nullable=False)
-    date = Column(DateTime, server_default=func.now())
+    date = Column(TIMESTAMP, server_default=func.now())
     amount = Column(Float, nullable=False)
     global_discount = Column(Float, default=0.0)
     details = Column(Text, nullable=True)
@@ -108,7 +109,7 @@ class InventoryHistory(Base):
     change = Column(Integer, nullable=False)
     type = Column(Enum(InventoryChangeType), nullable=False)
     description = Column(Text, nullable=True)
-    date = Column(DateTime, server_default=func.now())
+    date = Column(TIMESTAMP, server_default=func.now())
 
     performed_by_id = Column(CHAR(36), ForeignKey("users.id"))
 

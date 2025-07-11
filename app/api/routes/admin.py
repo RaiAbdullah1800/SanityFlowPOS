@@ -17,7 +17,7 @@ from app.core.security import validate_admin
 from app.db.supabase_client import supabase
 from app.api.schemas.item import (
     ItemCreate, ItemResponse, ItemUpdate, ItemSizeCreate, ItemSizeUpdate,
-    RestockRequest, DateRangeFilter, ItemSizeResponse
+    RestockRequest, DateRangeFilter, ItemSizeResponse, ItemListResponse
 )
 from app.api.schemas.category import CategoryResponse
 
@@ -175,6 +175,64 @@ async def add_item(
             detail=f"Failed to create item: {str(e)}"
         )
 
+# We are moving the new endpoint to this location
+# to avoid conflict with the /items/{item_id} route
+@router.get("/items/details", response_model=List[ItemListResponse])
+def get_items_with_details(
+    search: Optional[str] = Query(None, description="Search by item name"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: dict = Depends(validate_admin)
+):
+    """
+    Get a list of items with their details including:
+    - Item ID
+    - Item name
+    - Category information
+    - List of sizes with size ID, size label, and current stock
+    
+    Supports search by item name and pagination.
+    """
+    # Build the query
+    query = db.query(Item).options(joinedload(Item.sizes), joinedload(Item.category_obj))
+    
+    if search:
+        # Case-insensitive search for items that contain the search string
+        query = query.filter(Item.name.ilike(f"%{search}%"))
+    
+    # Apply pagination
+    items = query.offset(skip).limit(limit).all()
+    
+    # Convert to the response model
+    result = []
+    for item in items:
+        # Prepare the category data if exists
+        category_data = None
+        if item.category_obj:
+            category_data = {
+                "id": item.category_obj.id,
+                "name": item.category_obj.name
+            }
+        
+        # Prepare the sizes data
+        sizes_data = []
+        for size in item.sizes:
+            sizes_data.append({
+                "id": size.id,
+                "size_label": size.size_label,
+                "stock": size.stock
+            })
+        
+        result.append({
+            "id": item.id,
+            "name": item.name,
+            "category": category_data,
+            "sizes": sizes_data
+        })
+    
+    return result
+
 @router.get("/items/{item_id}", response_model=ItemResponse)
 def get_item(
     item_id: str,
@@ -214,6 +272,57 @@ def list_items(
     
     items = query.all()
     return items
+
+@router.get("/items/list", response_model=List[ItemListResponse])
+def list_items_with_details(
+    search: Optional[str] = Query(None, description="Search by item name"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: dict = Depends(validate_admin)
+):
+    """
+    Get a list of items with their details including sizes and category.
+    Supports search by item name and pagination.
+    """
+    # Build the query
+    query = db.query(Item).options(joinedload(Item.sizes), joinedload(Item.category_obj))
+    
+    if search:
+        # Case-insensitive search for items that contain the search string
+        query = query.filter(Item.name.ilike(f"%{search}%"))
+    
+    # Apply pagination
+    items = query.offset(skip).limit(limit).all()
+    
+    # Convert to the response model
+    result = []
+    for item in items:
+        # Prepare the category data if exists
+        category_data = None
+        if item.category_obj:
+            category_data = {
+                "id": item.category_obj.id,
+                "name": item.category_obj.name
+            }
+        
+        # Prepare the sizes data
+        sizes_data = []
+        for size in item.sizes:
+            sizes_data.append({
+                "id": size.id,
+                "size_label": size.size_label,
+                "stock": size.stock
+            })
+        
+        result.append({
+            "id": item.id,
+            "name": item.name,
+            "category": category_data,
+            "sizes": sizes_data
+        })
+    
+    return result
 
 @router.put("/items/{item_id}", response_model=ItemResponse)
 async def update_item(
