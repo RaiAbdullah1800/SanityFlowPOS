@@ -519,23 +519,56 @@ async def restock_item(
 async def get_inventory_history(
     item_id: Optional[str] = None,
     type: Optional[InventoryChangeType] = None,
-    date_range: Optional[DateRangeFilter] = None,
+    start_date: Optional[datetime] = Query(None, description="Start date for filtering"),
+    end_date: Optional[datetime] = Query(None, description="End date for filtering"),
+    search: Optional[str] = Query(None, description="Search term for item name or username"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, le=100),
     db: Session = Depends(get_db),
     _: dict = Depends(validate_admin)
 ):
-    query = db.query(InventoryHistory)
+    # Query with joins to get related data
+    query = db.query(
+        InventoryHistory,
+        Item.name.label('item_name'),
+        User.username.label('username')
+    ).join(Item, InventoryHistory.item_id == Item.id
+    ).join(User, InventoryHistory.performed_by_id == User.id)
     
     if item_id:
         query = query.filter(InventoryHistory.item_id == item_id)
     if type:
         query = query.filter(InventoryHistory.type == type)
-    if date_range:
-        if date_range.start_date:
-            query = query.filter(InventoryHistory.date >= date_range.start_date)
-        if date_range.end_date:
-            query = query.filter(InventoryHistory.date <= date_range.end_date)
+    if start_date:
+        query = query.filter(InventoryHistory.date >= start_date)
+    if end_date:
+        query = query.filter(InventoryHistory.date <= end_date)
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(or_(
+            Item.name.ilike(search_term),
+            User.username.ilike(search_term)
+        ))
     
-    return query.order_by(InventoryHistory.date.desc()).all()
+    # Apply pagination
+    total = query.count()
+    results = query.order_by(InventoryHistory.date.desc()).offset(skip).limit(limit).all()
+
+    
+    # Format response
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "data": [{
+            "id": r.InventoryHistory.id,
+            "type": r.InventoryHistory.type,
+            "change": r.InventoryHistory.change,
+            "date": r.InventoryHistory.date,
+            "item_name": r.item_name,
+            "username": r.username
+        } for r in results]
+    }
 
 # --- Sales Management ---
 @router.get("/sales/")
