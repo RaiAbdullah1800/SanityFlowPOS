@@ -566,7 +566,8 @@ async def get_inventory_history(
             "change": r.InventoryHistory.change,
             "date": r.InventoryHistory.date,
             "item_name": r.item_name,
-            "username": r.username
+            "username": r.username,
+            "description": r.InventoryHistory.description
         } for r in results]
     }
 
