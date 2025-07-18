@@ -115,34 +115,3 @@ def update_category(
     db.commit()
     db.refresh(db_category)
     return db_category
-
-@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_category(
-    category_id: str,
-    db: Session = Depends(get_db),
-    _: dict = Depends(validate_admin)
-):
-    """
-    Delete a category.
-    Note: This will set category_id to NULL for all items in this category.
-    """
-    db_category = db.query(Category).filter(Category.id == category_id).first()
-    if not db_category:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Category not found"
-        )
-    
-    # Check if category has items
-    item_count = db.query(Item).filter(Item.category_id == category_id).count()
-    if item_count > 0:
-        # Instead of deleting, you might want to handle this differently
-        # For example, you could prevent deletion or move items to a default category
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot delete category with {item_count} items. Please reassign or delete the items first."
-        )
-    
-    db.delete(db_category)
-    db.commit()
-    return None

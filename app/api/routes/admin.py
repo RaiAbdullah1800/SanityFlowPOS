@@ -644,3 +644,107 @@ async def delete_item_image(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete image: {str(e)}"
         )
+
+
+
+
+
+# --- Delete Endpoints ---
+
+@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_item(
+    item_id: str,
+    db: Session = Depends(get_db),
+    _: dict = Depends(validate_admin)
+):
+    """
+    Delete an item and all its associated data.
+
+    This will permanently remove:
+    - The item itself
+    - All associated item sizes
+    - All inventory history for the item
+    - The item's image from the storage bucket
+
+    This action is irreversible.
+    """
+    db_item = db.query(Item).filter(Item.id == item_id).first()
+
+    if not db_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found"
+        )
+
+    try:
+        # Delete the image from Supabase storage if it exists
+        if db_item.image_url:
+            try:
+                # Extract the file name from the URL
+                file_name = db_item.image_url.split(f"{STORAGE_BUCKET}/")[-1]
+                if file_name:
+                    supabase.storage.from_(STORAGE_BUCKET).remove([file_name])
+            except Exception as e:
+                # Log the error but proceed with DB deletion
+                print(f"Warning: Failed to delete image '{db_item.image_url}' from storage: {e}")
+
+
+        # Delete related records
+        db.query(InventoryHistory).filter(InventoryHistory.item_id == item_id).delete(synchronize_session=False)
+        db.query(OrderItem).filter(OrderItem.item_id == item_id).delete(synchronize_session=False)
+        db.query(ItemSize).filter(ItemSize.item_id == item_id).delete(synchronize_session=False)
+
+        # Delete the item itself
+        db.delete(db_item)
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete item and its related data: {str(e)}"
+        )
+
+    return None
+
+
+@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category(
+    category_id: str,
+    db: Session = Depends(get_db),
+    _: dict = Depends(validate_admin)
+):
+    """
+    Delete a category.
+
+    A category can only be deleted if it has no items associated with it.
+    If there are items linked to the category, the deletion will be blocked
+    to prevent orphaned items.
+    """
+    db_category = db.query(Category).filter(Category.id == category_id).first()
+
+    if not db_category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found"
+        )
+
+    # Check if any items are associated with this category
+    associated_items_count = db.query(Item).filter(Item.category_id == category_id).count()
+    if associated_items_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete category. It is associated with {associated_items_count} item(s)."
+        )
+
+    try:
+        db.delete(db_category)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete category: {str(e)}"
+        )
+
+    return None
