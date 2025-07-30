@@ -79,6 +79,7 @@ class ItemResponse(ItemBase):
 class ItemListResponse(BaseModel):
     id: str
     name: str
+    image_url: Optional[str] = None
     category: Optional[Dict[str, Any]] = None
     sizes: List[Dict[str, Any]]
 
