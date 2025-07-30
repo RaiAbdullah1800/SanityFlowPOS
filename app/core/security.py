@@ -80,3 +80,21 @@ async def validate_admin(token: str = Depends(oauth2_scheme)):
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+async def validate_cashier(token: str = Depends(oauth2_scheme)):
+    """Validate that the token belongs to a cashier user"""
+    try:
+        payload = verify_token(token)
+        if "cashier" not in payload.get("scope", []):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cashier access required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return payload
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
