@@ -5,7 +5,7 @@ from app.db.db import get_db
 from app.db.models import Item, ItemSize, Category
 from app.api.schemas.item import ItemListResponse
 from app.api.schemas.category import CategoryResponse
-from app.api.schemas.order import OrderCreate, OrderResponse, OrderItemResponse
+from app.api.schemas.order import OrderCreate, OrderResponse, OrderItemResponse, PaginatedSalesResponse
 from app.db.models import Order, OrderItem, InventoryHistory, InventoryChangeType, User
 from app.core.security import validate_cashier
 
@@ -158,3 +158,6 @@ def create_order_for_cashier(
             discount_applied=oi.discount_applied
         ) for oi in new_order.items]
     )
+
+# Remove the existing sales endpoint
+# This has been moved to shared.py for admin/cashier access

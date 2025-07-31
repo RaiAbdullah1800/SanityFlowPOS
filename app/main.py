@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.db import engine
 from app.db import models
-from app.api.routes import auth, admin, categories, cashier
+from app.api.routes import auth, admin, categories, cashier, shared
 
 # Create tables
 models.Base.metadata.create_all(bind=engine)
@@ -23,6 +23,7 @@ app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(categories.router)
 app.include_router(cashier.router)
+app.include_router(shared.router)
 
 @app.get("/")
 def root():
