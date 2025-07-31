@@ -30,3 +30,9 @@ class OrderResponse(BaseModel):
     details: Optional[str]
     cashier_id: str
     items: List[OrderItemResponse]
+
+class PaginatedSalesResponse(BaseModel):
+    items: List[OrderResponse]
+    total: int
+    skip: int
+    limit: int
