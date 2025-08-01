@@ -30,6 +30,7 @@ class OrderResponse(BaseModel):
     details: Optional[str]
     cashier_id: str
     items: List[OrderItemResponse]
+    has_been_returned: Optional[bool] = False
 
 class PaginatedSalesResponse(BaseModel):
     items: List[OrderResponse]
