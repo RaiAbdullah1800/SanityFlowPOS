@@ -14,13 +14,13 @@ from app.core.security import (
     verify_token,
     refresh_access_token,
 )  # ensure these are defined in security.py
+from app.core.email_utils import generate_random_password, send_password_email
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 # --- Pydantic Schemas ---
 class SignupRequest(BaseModel):
     username: str
-    password: str
     role: UserRole = UserRole.cashier  # enforce valid enum
 
 class LoginRequest(BaseModel):
@@ -68,9 +68,21 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == payload.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
 
+    # Generate random password
+    generated_password = generate_random_password()
+    
+    # Send password via email
+    email_sent = send_password_email(payload.username, generated_password)
+    if not email_sent:
+        raise HTTPException(status_code=500, detail="Failed to send password email")
+    
+    # Hash the generated password
+    hashed_password = hash_password(generated_password)
+    
+    # Create user with hashed password
     user = User(
         username=payload.username,
-        password_hash=hash_password(payload.password),
+        password_hash=hashed_password,
         role=payload.role
     )
     db.add(user)
