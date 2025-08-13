@@ -58,7 +58,7 @@ class ItemSize(Base):
     item_id = Column(CHAR(36), ForeignKey("items.id"))
     size_label = Column(String(20))  # e.g., Small, Medium, Large
     price = Column(Float, nullable=False)
-    discount = Column(Float, nullable=True)  # Optional
+    discount = Column(Float, nullable=True)  # Optional percentage (0-100)
     stock = Column(Integer, default=0, nullable=False)  # Add stock column
     created_at = Column(TIMESTAMP, server_default=func.now())
 
@@ -72,7 +72,6 @@ class Order(Base):
     transaction_id = Column(String(100), unique=True, nullable=False)
     date = Column(TIMESTAMP, server_default=func.now())
     amount = Column(Float, nullable=False)
-    global_discount = Column(Float, default=0.0)
     details = Column(Text, nullable=True)
 
     cashier_id = Column(CHAR(36), ForeignKey("users.id"))
@@ -89,7 +88,7 @@ class OrderItem(Base):
     size_label = Column(String(20))  # To record what size was bought
     quantity = Column(Integer, nullable=False)
     price_at_purchase = Column(Float, nullable=False)
-    discount_applied = Column(Float, nullable=True)
+    discount_applied = Column(Float, nullable=True)  # Percentage at time of purchase (0-100)
 
     order = relationship("Order", back_populates="items")
     item = relationship("Item")
