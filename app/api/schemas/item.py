@@ -6,7 +6,7 @@ import json
 class ItemSizeBase(BaseModel):
     size_label: str = Field(..., min_length=1, max_length=20)
     price: float = Field(..., gt=0)
-    discount: Optional[float] = Field(None, ge=0)
+    discount: Optional[float] = Field(None, ge=0, le=100, description="Local discount percentage (0-100)")
     stock: conint(ge=0) = 0
 
 class ItemSizeCreate(ItemSizeBase):
@@ -16,7 +16,7 @@ class ItemSizeUpdate(ItemSizeBase):
     id: Optional[str] = None 
     size_label: Optional[str] = Field(None, min_length=1, max_length=20)
     price: Optional[float] = Field(None, gt=0)
-    discount: Optional[float] = Field(None, ge=0)
+    discount: Optional[float] = Field(None, ge=0, le=100, description="Local discount percentage (0-100)")
     stock: Optional[conint(ge=0)] = None
     correction_reason: Optional[str] = None
 
