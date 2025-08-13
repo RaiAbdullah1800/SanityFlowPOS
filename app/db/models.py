@@ -32,6 +32,7 @@ class Category(Base):
 
     id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid4()))
     name = Column(String(50), nullable=False, unique=True, index=True)
+    discount = Column(Float, nullable=True)  # Optional percentage (0-100) applied to all items in this category
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     items = relationship("Item", back_populates="category_obj")
