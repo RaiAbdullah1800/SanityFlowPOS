@@ -212,7 +212,8 @@ def get_items_with_details(
         if item.category_obj:
             category_data = {
                 "id": item.category_obj.id,
-                "name": item.category_obj.name
+                "name": item.category_obj.name,
+                "discount": item.category_obj.discount
             }
         
         # Prepare the sizes data
@@ -303,7 +304,8 @@ def list_items_with_details(
         if item.category_obj:
             category_data = {
                 "id": item.category_obj.id,
-                "name": item.category_obj.name
+                "name": item.category_obj.name,
+                "discount": item.category_obj.discount
             }
         
         # Prepare the sizes data

@@ -47,15 +47,23 @@ def list_items_for_cashier(
         if item.category_obj:
             category_data = {
                 "id": item.category_obj.id,
-                "name": item.category_obj.name
+                "name": item.category_obj.name,
+                "discount": item.category_obj.discount
             }
         sizes_data = []
         for size in item.sizes:
+            # Determine effective discount: category overrides item-size discount ONLY if > 0
+            category_discount = item.category_obj.discount if item.category_obj else None
+            if category_discount is not None and category_discount > 0:
+                effective_discount = category_discount
+            else:
+                effective_discount = (size.discount or 0.0)
             sizes_data.append({
                 "id": size.id,
                 "size_label": size.size_label,
                 "price": size.price,
                 "discount": size.discount,
+                "effective_discount": effective_discount,
                 "stock": size.stock,
                 "created_at": size.created_at
             })
@@ -98,16 +106,24 @@ def create_order_for_cashier(
     total = 0.0
     order_items = []
     for item in order.items:
-        size = db.query(ItemSize).filter(ItemSize.item_id == item.item_id, ItemSize.size_label == item.size_label).first()
+        size = db.query(ItemSize).filter(
+            ItemSize.item_id == item.item_id, ItemSize.size_label == item.size_label
+        ).first()
         if not size:
             db.rollback()
             raise HTTPException(status_code=404, detail=f"Size {item.size_label} for item {item.item_id} not found")
         if size.stock < item.quantity:
             db.rollback()
             raise HTTPException(status_code=400, detail=f"Not enough stock for item {item.item_id} size {item.size_label}")
-        # Use backend price and percentage discount
+        # Use backend price and percentage discount (category overrides item-size)
         price = size.price
-        discount_percent = size.discount or 0.0
+        # Load item's category to check for category-level discount
+        item_obj = db.query(Item).options(joinedload(Item.category_obj)).filter(Item.id == item.item_id).first()
+        category_discount = item_obj.category_obj.discount if (item_obj and item_obj.category_obj) else None
+        if category_discount is not None and category_discount > 0:
+            discount_percent = category_discount
+        else:
+            discount_percent = (size.discount or 0.0)
         effective_price = price * (1 - (discount_percent / 100.0))
         subtotal = effective_price * item.quantity
         total += subtotal
