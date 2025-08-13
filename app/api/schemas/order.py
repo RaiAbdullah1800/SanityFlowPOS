@@ -9,7 +9,6 @@ class OrderItemCreate(BaseModel):
 
 class OrderCreate(BaseModel):
     items: List[OrderItemCreate]
-    global_discount: Optional[float] = 0.0
     details: Optional[str] = None
 
 class OrderItemResponse(BaseModel):
@@ -26,7 +25,6 @@ class OrderResponse(BaseModel):
     transaction_id: str
     date: datetime
     amount: float
-    global_discount: float
     details: Optional[str]
     cashier_id: str
     items: List[OrderItemResponse]
