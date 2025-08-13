@@ -123,7 +123,7 @@ async def add_item(
         username = token.get("sub")
         user = db.query(User).filter(User.username == username).first()
         if not user:
-            raise HTTPException(status_code=404, detail="Performing user not found")
+            raise HTTPException(status_code=401, detail="Performing user not found")
 
         # Validate and upload image
         await validate_image(image)
@@ -357,7 +357,7 @@ async def update_item(
         username = token.get("sub")
         user = db.query(User).filter(User.username == username).first()
         if not user:
-            raise HTTPException(status_code=404, detail="Performing user not found")
+            raise HTTPException(status_code=401, detail="Performing user not found")
 
         # First verify the item exists
         db_item = db.query(Item).filter(Item.id == item_id).first()
@@ -489,7 +489,7 @@ async def restock_item(
     username = token.get("sub")
     user = db.query(User).filter(User.username == username).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Performing user not found")
+        raise HTTPException(status_code=401, detail="Performing user not found")
 
     # Find the specific size
     size = db.query(ItemSize).filter(
