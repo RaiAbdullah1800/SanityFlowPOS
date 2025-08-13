@@ -32,7 +32,7 @@ def list_items_for_cashier(
 ):
     """
     List items for cashier with search, pagination, and category filter.
-    Each item includes: id, name, image_url, category, sizes (with stock, price, discount, etc).
+    Each item includes: id, name, image_url, category, sizes (with stock, price, discount percent, etc).
     """
     query = db.query(Item).options(joinedload(Item.sizes), joinedload(Item.category_obj))
     if search:
@@ -105,17 +105,18 @@ def create_order_for_cashier(
         if size.stock < item.quantity:
             db.rollback()
             raise HTTPException(status_code=400, detail=f"Not enough stock for item {item.item_id} size {item.size_label}")
-        # Use backend price and discount
+        # Use backend price and percentage discount
         price = size.price
-        discount = size.discount or 0.0
-        subtotal = (price - discount) * item.quantity
+        discount_percent = size.discount or 0.0
+        effective_price = price * (1 - (discount_percent / 100.0))
+        subtotal = effective_price * item.quantity
         total += subtotal
         order_items.append(OrderItem(
             item_id=item.item_id,
             size_label=item.size_label,
             quantity=item.quantity,
             price_at_purchase=price,
-            discount_applied=discount
+            discount_applied=discount_percent
         ))
         # Update inventory and add inventory history
         size.stock -= item.quantity
@@ -127,7 +128,7 @@ def create_order_for_cashier(
             performed_by_id=user.id
         ))
 
-    total -= order.global_discount or 0.0
+    # No global discount
     if total < 0:
         total = 0.0
 
@@ -136,7 +137,6 @@ def create_order_for_cashier(
     new_order = Order(
         transaction_id=str(uuid.uuid4()),
         amount=total,
-        global_discount=order.global_discount or 0.0,
         details=order.details,
         cashier_id=user.id,
         items=order_items
@@ -155,7 +155,6 @@ def create_order_for_cashier(
         transaction_id=new_order.transaction_id,
         date=new_order.date,
         amount=new_order.amount,
-        global_discount=new_order.global_discount,
         details=new_order.details,
         cashier_id=new_order.cashier_id,
         items=[OrderItemResponse(
@@ -256,7 +255,6 @@ def get_order_by_id(
         transaction_id=order.transaction_id,
         date=order.date,
         amount=order.amount,
-        global_discount=order.global_discount,
         details=order.details,
         cashier_id=order.cashier_id,
         items=items,
@@ -384,7 +382,7 @@ def process_return(
         if returned_items and return_order_items:
             # Calculate total return amount
             total_return_amount = sum([
-                (item.price_at_purchase - (item.discount_applied or 0)) * abs(item.quantity)
+                (item.price_at_purchase * (1 - ((item.discount_applied or 0) / 100.0))) * abs(item.quantity)
                 for item in return_order_items
             ])
             
@@ -393,8 +391,7 @@ def process_return(
             unique_id = str(uuid.uuid4())[:8]
             return_order = Order(
                 transaction_id=f"RETURN_{order.transaction_id}_{unique_id}",
-                amount=-total_return_amount,  # Negative amount for return
-                global_discount=0.0,
+                amount=-total_return_amount,  
                 details=f"Return for order {order.transaction_id}: {reason}",
                 cashier_id=user.id
             )
@@ -430,7 +427,7 @@ def process_return(
         
         # Calculate total return amount for receipt
         total_return_amount = sum([
-            (item['price_at_purchase'] - (item['discount_applied'] or 0)) * item['quantity']
+            (item['price_at_purchase'] * (1 - ((item['discount_applied'] or 0) / 100.0))) * item['quantity']
             for item in returned_items
         ])
         
@@ -529,7 +526,7 @@ def process_return(
             ))
             
             # Calculate return amount for this item
-            item_return_amount = (order_item.price_at_purchase - (order_item.discount_applied or 0)) * quantity
+            item_return_amount = (order_item.price_at_purchase * (1 - ((order_item.discount_applied or 0)/100.0))) * quantity
             total_return_amount += item_return_amount
             
             # Create negative sales record for return
@@ -556,9 +553,8 @@ def process_return(
             unique_id = str(uuid.uuid4())[:8]
             return_order = Order(
                 transaction_id=f"RETURN_{order.transaction_id}_{unique_id}",
-                amount=-total_return_amount,  # Negative amount for return
-                global_discount=0.0,
-                details=f"Return for order {order.transaction_id}: {reason}",
+                amount=-total_return_amount,  
+                details=f"Partial return for order {order.transaction_id}: {reason}",
                 cashier_id=user.id
             )
             db.add(return_order)
