@@ -72,7 +72,8 @@ class ItemResponse(ItemBase):
         if hasattr(obj, 'category_obj') and obj.category_obj:
             item_dict['category'] = {
                 'id': obj.category_obj.id,
-                'name': obj.category_obj.name
+                'name': obj.category_obj.name,
+                'discount': getattr(obj.category_obj, 'discount', None)
             }
         return cls(**item_dict)
 
