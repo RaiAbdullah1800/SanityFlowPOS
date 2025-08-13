@@ -29,7 +29,6 @@ def get_sales_list(
             "transaction_id": order.transaction_id,
             "date": order.date,
             "amount": order.amount,
-            "global_discount": order.global_discount,
             "details": order.details,
             "cashier_id": order.cashier_id,
             "items": []
