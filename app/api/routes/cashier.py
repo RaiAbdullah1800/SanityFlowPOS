@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, Path, Body
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, cast, Integer
 from typing import List, Optional
 from pydantic import BaseModel
 from app.db.db import get_db
@@ -148,10 +149,14 @@ def create_order_for_cashier(
     if total < 0:
         total = 0.0
 
-    # Create Order
-    import uuid
+    # Create Order with sequential numeric transaction_id
+    # Find the current max numeric transaction_id (stored as string)
+    max_numeric = db.query(func.max(cast(Order.transaction_id, Integer))).\
+        filter(Order.transaction_id.op('REGEXP')('^[0-9]+$')).scalar()
+    next_transaction_id = str(((max_numeric or 0) + 1))
+
     new_order = Order(
-        transaction_id=str(uuid.uuid4()),
+        transaction_id=next_transaction_id,
         amount=total,
         details=order.details,
         cashier_id=user.id,
@@ -402,11 +407,12 @@ def process_return(
                 for item in return_order_items
             ])
             
-            # Create return order with unique transaction ID
-            import uuid
-            unique_id = str(uuid.uuid4())[:8]
+            # Create return order with structured transaction ID: RETURN_<original_numeric>_<n>
+            existing_returns_count = db.query(func.count(Order.id)).\
+                filter(Order.transaction_id.like(f"RETURN_{order.transaction_id}%")).scalar() or 0
+            return_txn_id = f"RETURN_{order.transaction_id}_{existing_returns_count + 1}"
             return_order = Order(
-                transaction_id=f"RETURN_{order.transaction_id}_{unique_id}",
+                transaction_id=return_txn_id,
                 amount=-total_return_amount,  
                 details=f"Return for order {order.transaction_id}: {reason}",
                 cashier_id=user.id
@@ -564,11 +570,12 @@ def process_return(
         
         # Create a single return order for all items
         if returned_items and return_order_items:
-            # Create return order with unique transaction ID
-            import uuid
-            unique_id = str(uuid.uuid4())[:8]
+            # Create return order with structured transaction ID: RETURN_<original_numeric>_<n>
+            existing_returns_count = db.query(func.count(Order.id)).\
+                filter(Order.transaction_id.like(f"RETURN_{order.transaction_id}%")).scalar() or 0
+            return_txn_id = f"RETURN_{order.transaction_id}_{existing_returns_count + 1}"
             return_order = Order(
-                transaction_id=f"RETURN_{order.transaction_id}_{unique_id}",
+                transaction_id=return_txn_id,
                 amount=-total_return_amount,  
                 details=f"Partial return for order {order.transaction_id}: {reason}",
                 cashier_id=user.id
