@@ -66,6 +66,34 @@ class ItemSize(Base):
     item = relationship("Item", back_populates="sizes")
 
 
+class Shopper(Base):
+    __tablename__ = "shoppers"
+
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid4()))
+    customer_code = Column(String(50), unique=True, index=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    phone_number = Column(String(20), nullable=True)
+    address = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    orders = relationship("Order", back_populates="shopper")
+    dues = relationship("Due", back_populates="shopper")
+
+
+class Due(Base):
+    __tablename__ = "dues"
+
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid4()))
+    shopper_id = Column(CHAR(36), ForeignKey("shoppers.id"), nullable=False)
+    order_id = Column(CHAR(36), ForeignKey("orders.id"), nullable=True)
+    amount = Column(Float, nullable=False)  # Positive for new due, negative for payment
+    description = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    shopper = relationship("Shopper", back_populates="dues")
+    order = relationship("Order")
+
+
 class Order(Base):
     __tablename__ = "orders"
 
@@ -76,7 +104,10 @@ class Order(Base):
     details = Column(Text, nullable=True)
 
     cashier_id = Column(CHAR(36), ForeignKey("users.id"))
+    shopper_id = Column(CHAR(36), ForeignKey("shoppers.id"), nullable=True)
+
     cashier = relationship("User", back_populates="orders")
+    shopper = relationship("Shopper", back_populates="orders")
     items = relationship("OrderItem", back_populates="order")
 
 
