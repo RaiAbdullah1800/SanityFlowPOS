@@ -10,6 +10,8 @@ class OrderItemCreate(BaseModel):
 class OrderCreate(BaseModel):
     items: List[OrderItemCreate]
     details: Optional[str] = None
+    customer_code: Optional[str] = None
+    is_paid: bool = True
 
 class OrderItemResponse(BaseModel):
     id: str
@@ -27,6 +29,7 @@ class OrderResponse(BaseModel):
     amount: float
     details: Optional[str]
     cashier_id: str
+    shopper_id: Optional[str] = None
     items: List[OrderItemResponse]
     has_been_returned: Optional[bool] = False
 
