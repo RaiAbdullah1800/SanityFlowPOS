@@ -172,15 +172,18 @@ async def get_low_stock_items(
     """
     results = db.query(
         Item.name.label('item_name'),
+        Category.name.label('category'),
         ItemSize.size_label.label('size_label'),
         ItemSize.stock.label('current_stock')
     ).join(ItemSize, Item.id == ItemSize.item_id
+    ).join(Category, Item.category_id == Category.id
     ).filter(ItemSize.stock <= threshold
-    ).order_by(ItemSize.stock).all()
+    ).order_by(Category.name, ItemSize.stock).all()
     
     return [
         LowStockItemResponse(
             item_name=result.item_name,
+            category=result.category if result.category else 'Uncategorized',
             size_label=result.size_label,
             current_stock=result.current_stock
         )

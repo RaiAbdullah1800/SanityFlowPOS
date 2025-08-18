@@ -35,6 +35,7 @@ class PaymentMethodBreakdownResponse(BaseModel):
 
 class LowStockItemResponse(BaseModel):
     item_name: str
+    category: str
     size_label: str
     current_stock: int
     
