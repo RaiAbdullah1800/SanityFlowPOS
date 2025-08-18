@@ -1,16 +1,15 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, Path, Body
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, cast, Integer
+from sqlalchemy import func, cast, Integer, or_
 from typing import List, Optional
 from pydantic import BaseModel
 from app.db.db import get_db
-from app.db.models import Item, ItemSize, Category
+from app.db.models import Item, ItemSize, Category, Due
 from app.api.schemas.item import ItemListResponse
 from app.api.schemas.category import CategoryResponse
 from app.api.schemas.order import OrderCreate, OrderResponse, OrderItemResponse, PaginatedSalesResponse
-from app.db.models import Order, OrderItem, InventoryHistory, InventoryChangeType, User
+from app.db.models import Order, OrderItem, InventoryHistory, InventoryChangeType, User, Shopper, Due
 from app.core.security import validate_cashier
-
 router = APIRouter(prefix="/cashier", tags=["Cashier"])
 
 class ReturnItemRequest(BaseModel):
@@ -88,7 +87,7 @@ def list_categories_for_cashier(
     categories = db.query(Category).order_by(Category.name).all()
     return categories
 
-@router.post("/orders", response_model=OrderResponse)
+@router.post("/orders", response_model=OrderResponse, status_code=201)
 def create_order_for_cashier(
     order: OrderCreate,
     db: Session = Depends(get_db),
@@ -97,80 +96,100 @@ def create_order_for_cashier(
     """
     Create a new order as cashier.
     """
-    # Get cashier user
     username = token.get("sub")
     user = db.query(User).filter(User.username == username).first()
     if not user:
         raise HTTPException(status_code=404, detail="Cashier not found")
 
-    # Calculate total amount and build order items
+    shopper_id = None
+    if order.customer_code:
+        shopper = db.query(Shopper).filter(Shopper.customer_code == order.customer_code).first()
+        if not shopper:
+            raise HTTPException(status_code=404, detail=f"Shopper with code {order.customer_code} not found")
+        shopper_id = shopper.id
+
     total = 0.0
     order_items = []
-    for item in order.items:
-        size = db.query(ItemSize).filter(
-            ItemSize.item_id == item.item_id, ItemSize.size_label == item.size_label
+    for item_data in order.items:
+        item_size = db.query(ItemSize).options(joinedload(ItemSize.item).joinedload(Item.category_obj)).filter(
+            ItemSize.item_id == item_data.item_id,
+            ItemSize.size_label == item_data.size_label
         ).first()
-        if not size:
-            db.rollback()
-            raise HTTPException(status_code=404, detail=f"Size {item.size_label} for item {item.item_id} not found")
-        if size.stock < item.quantity:
-            db.rollback()
-            raise HTTPException(status_code=400, detail=f"Not enough stock for item {item.item_id} size {item.size_label}")
-        # Use backend price and percentage discount (category overrides item-size)
-        price = size.price
-        # Load item's category to check for category-level discount
-        item_obj = db.query(Item).options(joinedload(Item.category_obj)).filter(Item.id == item.item_id).first()
-        category_discount = item_obj.category_obj.discount if (item_obj and item_obj.category_obj) else None
-        if category_discount is not None and category_discount > 0:
-            discount_percent = category_discount
-        else:
-            discount_percent = (size.discount or 0.0)
-        effective_price = price * (1 - (discount_percent / 100.0))
-        subtotal = effective_price * item.quantity
-        total += subtotal
-        order_items.append(OrderItem(
-            item_id=item.item_id,
-            size_label=item.size_label,
-            quantity=item.quantity,
-            price_at_purchase=price,
-            discount_applied=discount_percent
-        ))
-        # Update inventory and add inventory history
-        size.stock -= item.quantity
+        if not item_size:
+            raise HTTPException(status_code=404, detail=f"Item with ID {item_data.item_id} and size {item_data.size_label} not found")
+        if item_size.stock < item_data.quantity:
+            raise HTTPException(status_code=400, detail=f"Not enough stock for {item_size.item.name} ({item_data.size_label})")
+
+        category_discount = item_size.item.category_obj.discount if item_size.item.category_obj else None
+        effective_discount = category_discount if category_discount is not None and category_discount > 0 else (item_size.discount or 0.0)
+        
+        price_after_discount = item_size.price * (1 - (effective_discount / 100.0))
+        total += price_after_discount * item_data.quantity
+
+        order_item = OrderItem(
+            item_id=item_data.item_id,
+            size_label=item_data.size_label,
+            quantity=item_data.quantity,
+            price_at_purchase=item_size.price,
+            discount_applied=effective_discount
+        )
+        order_items.append(order_item)
+
+        item_size.stock -= item_data.quantity
         db.add(InventoryHistory(
-            item_id=item.item_id,
-            change=-item.quantity,
+            item_id=item_data.item_id,
+            change=-item_data.quantity,
             type=InventoryChangeType.sale,
-            description=f"Sold {item.quantity} of size {item.size_label}",
+            description=f"Sale via cashier. Order Item ID: {order_item.id}",
             performed_by_id=user.id
         ))
 
-    # No global discount
-    if total < 0:
-        total = 0.0
+    # Find the maximum numeric transaction ID and ensure it's at least 999
+    last_numeric_id = db.query(func.max(cast(Order.transaction_id, Integer)))\
+        .filter(Order.transaction_id.op('REGEXP')('^[0-9]+$')).scalar() or 0
 
-    # Create Order with sequential numeric transaction_id
-    # Find the current max numeric transaction_id (stored as string)
-    max_numeric = db.query(func.max(cast(Order.transaction_id, Integer))).\
-        filter(Order.transaction_id.op('REGEXP')('^[0-9]+$')).scalar()
-    next_transaction_id = str(((max_numeric or 0) + 1))
+    # Start from 1000 if the max ID is less than 999
+    next_transaction_id = str(max(last_numeric_id, 999) + 1)
 
     new_order = Order(
         transaction_id=next_transaction_id,
         amount=total,
         details=order.details,
         cashier_id=user.id,
+        shopper_id=shopper_id,
         items=order_items
     )
     db.add(new_order)
+    db.flush()
+
+    # Only create a due record if the customer is not paying (is_paid is False)
+    if shopper_id and not order.is_paid:
+        due = Due(
+            shopper_id=shopper_id,
+            order_id=new_order.id,
+            amount=total,
+            description=f"Order {next_transaction_id}"
+        )
+        db.add(due)
+
     db.commit()
     db.refresh(new_order)
 
-    # Eagerly load item relationship for all order items
-    for oi in new_order.items:
-        _ = oi.item  # Access to trigger loading if not already loaded
+    order_items_response = []
+    for item in new_order.items:
+        item_details = db.query(Item).filter(Item.id == item.item_id).first()
+        order_items_response.append(
+            OrderItemResponse(
+                id=item.id,
+                item_id=item.item_id,
+                item_name=item_details.name if item_details else "Unknown",
+                size_label=item.size_label,
+                quantity=item.quantity,
+                price_at_purchase=item.price_at_purchase,
+                discount_applied=item.discount_applied
+            )
+        )
 
-    # Prepare response
     return OrderResponse(
         id=new_order.id,
         transaction_id=new_order.transaction_id,
@@ -178,70 +197,41 @@ def create_order_for_cashier(
         amount=new_order.amount,
         details=new_order.details,
         cashier_id=new_order.cashier_id,
-        items=[OrderItemResponse(
-            id=oi.id,
-            item_id=oi.item_id,
-            item_name=oi.item.name if oi.item else "",
-            size_label=oi.size_label,
-            quantity=oi.quantity,
-            price_at_purchase=oi.price_at_purchase,
-            discount_applied=oi.discount_applied
-        ) for oi in new_order.items],
+        shopper_id=new_order.shopper_id,
+        items=order_items_response,
         has_been_returned=False
     )
 
 # Remove the existing sales endpoint
 # This has been moved to shared.py for admin/cashier access
 
-@router.get("/orders/{order_id}", response_model=OrderResponse)
-def get_order_by_id(
-    order_id: str = Path(..., description="ID of the order to retrieve"),
+@router.get("/orders/{identifier}", response_model=OrderResponse)
+def get_order_by_identifier(
+    identifier: str = Path(..., description="ID or Transaction ID of the order to retrieve"),
     db: Session = Depends(get_db),
     token: dict = Depends(validate_cashier)
 ):
     """
-    Retrieve order details by order ID for cashier.
-    Returns the same structure as the order creation endpoint.
+    Retrieve order details by order ID or transaction ID for cashier.
     """
-    # Get cashier user
     username = token.get("sub")
     user = db.query(User).filter(User.username == username).first()
     if not user:
         raise HTTPException(status_code=404, detail="Cashier not found")
 
-    # Find the order
+    # Find the order by ID or transaction ID
     order = db.query(Order).options(
         joinedload(Order.items).joinedload(OrderItem.item)
-    ).filter(Order.id == order_id).first()
-    
+    ).filter(or_(Order.id == identifier, Order.transaction_id == identifier)).first()
+
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    
-    # Check if order belongs to this cashier (optional security check)
-    # Uncomment the following lines if you want to restrict cashiers to only view their own orders
-    # if order.cashier_id != user.id:
-    #     raise HTTPException(status_code=403, detail="Not authorized to view this order")
-    
-    # Check if order has been returned
-    # Look for any return records associated with this order
-    has_been_returned = False
-    return_records = db.query(Order).filter(
+
+    # Check if the order has been returned
+    has_been_returned = db.query(Order).filter(
         Order.transaction_id.like(f"RETURN_{order.transaction_id}%")
-    ).first()
-    
-    if return_records:
-        has_been_returned = True
-    else:
-        # Also check if individual items have been returned
-        for order_item in order.items:
-            existing_returns = db.query(InventoryHistory).filter(
-                InventoryHistory.description.like(f"%Return%Order Item ID: {order_item.id}%")
-            ).first()
-            if existing_returns:
-                has_been_returned = True
-                break
-    
-    # Aggregate items to show net quantities (original purchases minus returns)
+    ).first() is not None
+
     aggregated_items = {}
     for oi in order.items:
         key = (oi.item_id, oi.size_label)
