@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, cast, Integer
 from typing import Optional
 from pydantic import BaseModel
+from app.core.security import validate_admin_or_cashier
 
 from app.db.db import get_db
 from app.db.models import Item, ItemSize, Category, Due, Order, OrderItem, InventoryHistory, InventoryChangeType, User, Shopper
@@ -232,11 +233,11 @@ def create_enhanced_order_for_cashier(
 @router.get("/orders/enhanced/sales", response_model=list[EnhancedOrderResponse])
 def get_enhanced_sales_list(
     db: Session = Depends(get_db),
-    token: dict = Depends(validate_cashier)
+    token: dict = Depends(validate_admin_or_cashier)
 ):
     """
     Retrieve all sales (orders) with enhanced details including shopper and cashier information
-    Accessible to cashier roles
+    Accessible to both admin and cashier roles
     """
     orders = db.query(Order).options(
         joinedload(Order.items).joinedload(OrderItem.item),
