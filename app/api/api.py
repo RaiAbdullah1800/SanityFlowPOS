@@ -9,6 +9,7 @@ from app.api.routes import (
     admin_dashboard,
     shopper
 )
+from app.api.routes import enhanced_cashier
 
 api_router = APIRouter()
 
@@ -30,6 +31,7 @@ def include_routers(app):
     api_router.include_router(admin_dashboard.router)
     api_router.include_router(cashier_dashboard.router)
     api_router.include_router(shared.router)
+    api_router.include_router(enhanced_cashier.router, prefix="/cashier", tags=["Enhanced Cashier"])
     
     api_router.include_router(shopper.router, prefix="/shoppers", tags=["Shoppers"])
     app.include_router(api_router)
