@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.db.db import get_db
 from app.db.models import Item, ItemSize, Category, Due, Order, OrderItem, InventoryHistory, InventoryChangeType, User, Shopper
-from app.api.schemas.enhanced_order import EnhancedOrderCreate, EnhancedOrderResponse
+from app.api.schemas.enhanced_order import EnhancedOrderCreate, EnhancedOrderResponse, CashierInfo, ShopperInfo
 from app.api.schemas.order import OrderItemResponse
 from app.api.routes.cashier import validate_cashier
 
@@ -192,6 +192,23 @@ def create_enhanced_order_for_cashier(
             )
         )
     
+    # Get cashier details
+    cashier = db.query(User).filter(User.id == new_order.cashier_id).first()
+    cashier_info = CashierInfo(id=cashier.id, username=cashier.username) if cashier else None
+    
+    # Get shopper details if shopper exists
+    shopper_info = None
+    if shopper_id:
+        shopper = db.query(Shopper).filter(Shopper.id == shopper_id).first()
+        if shopper:
+            shopper_info = ShopperInfo(
+                id=shopper.id,
+                customer_code=shopper.customer_code,
+                name=shopper.name,
+                phone_number=shopper.phone_number,
+                address=shopper.address
+            )
+    
     # Prepare response
     return EnhancedOrderResponse(
         id=new_order.id,
@@ -206,5 +223,155 @@ def create_enhanced_order_for_cashier(
         payment_amount=order.payment_amount,
         payment_breakdown=order.payment_breakdown,
         remaining_dues=remaining_dues if shopper_id else None,
-        remaining_order_balance=remaining_order_balance if shopper_id else None
+        remaining_order_balance=remaining_order_balance if shopper_id else None,
+        cashier=cashier_info,
+        shopper=shopper_info
+    )
+
+
+@router.get("/orders/enhanced/sales", response_model=list[EnhancedOrderResponse])
+def get_enhanced_sales_list(
+    db: Session = Depends(get_db),
+    token: dict = Depends(validate_cashier)
+):
+    """
+    Retrieve all sales (orders) with enhanced details including shopper and cashier information
+    Accessible to cashier roles
+    """
+    orders = db.query(Order).options(
+        joinedload(Order.items).joinedload(OrderItem.item),
+        joinedload(Order.cashier),
+        joinedload(Order.shopper)
+    ).all()
+    
+    response_items = []
+    for order in orders:
+        # Get cashier info
+        cashier_info = CashierInfo(
+            id=order.cashier.id,
+            username=order.cashier.username
+        ) if order.cashier else None
+        
+        # Get shopper info
+        shopper_info = ShopperInfo(
+            id=order.shopper.id,
+            customer_code=order.shopper.customer_code,
+            name=order.shopper.name,
+            phone_number=order.shopper.phone_number,
+            address=order.shopper.address
+        ) if order.shopper else None
+        
+        # Build order items with item names
+        order_items = []
+        for item in order.items:
+            order_item = OrderItemResponse(
+                id=item.id,
+                order_id=item.order_id,
+                item_id=item.item_id,
+                item_name=item.item.name if item.item else "Unknown Item",
+                size_label=item.size_label,
+                quantity=item.quantity,
+                price_at_purchase=item.price_at_purchase,
+                discount_applied=item.discount_applied
+            )
+            order_items.append(order_item)
+        
+        # Determine is_paid status based on whether there's a due record for this order
+        is_paid = True
+        if order.shopper_id:
+            due_record = db.query(Due).filter(Due.order_id == order.id, Due.amount > 0).first()
+            is_paid = due_record is None
+        
+        # Create enhanced order response
+        enhanced_order = EnhancedOrderResponse(
+            id=order.id,
+            transaction_id=order.transaction_id,
+            date=order.date,
+            amount=order.amount,
+            details=order.details,
+            cashier_id=order.cashier_id,
+            shopper_id=order.shopper_id,
+            items=order_items,
+            is_paid=is_paid,
+            payment_amount=None,
+            payment_breakdown=None,
+            remaining_dues=None,
+            remaining_order_balance=None,
+            cashier=cashier_info,
+            shopper=shopper_info
+        )
+        response_items.append(enhanced_order)
+    
+    return response_items
+
+@router.get("/orders/{order_id}", response_model=EnhancedOrderResponse)
+def get_enhanced_order_by_id(
+    order_id: str,
+    db: Session = Depends(get_db),
+    token: dict = Depends(validate_cashier)
+):
+    """
+    Get an order by ID with enhanced details including shopper and cashier information
+    """
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    # Get order items with item details
+    order_items_response = []
+    for item in order.items:
+        item_details = db.query(Item).filter(Item.id == item.item_id).first()
+        order_items_response.append(
+            OrderItemResponse(
+                id=item.id,
+                item_id=item.item_id,
+                item_name=item_details.name if item_details else "Unknown",
+                size_label=item.size_label,
+                quantity=item.quantity,
+                price_at_purchase=item.price_at_purchase,
+                discount_applied=item.discount_applied
+            )
+        )
+    
+    # Get cashier details
+    cashier = db.query(User).filter(User.id == order.cashier_id).first()
+    cashier_info = CashierInfo(id=cashier.id, username=cashier.username) if cashier else None
+    
+    # Get shopper details if shopper exists
+    shopper_info = None
+    if order.shopper_id:
+        shopper = db.query(Shopper).filter(Shopper.id == order.shopper_id).first()
+        if shopper:
+            shopper_info = ShopperInfo(
+                id=shopper.id,
+                customer_code=shopper.customer_code,
+                name=shopper.name,
+                phone_number=shopper.phone_number,
+                address=shopper.address
+            )
+    
+    # Determine is_paid status based on whether there's a due record for this order
+    is_paid = True
+    if order.shopper_id:
+        due_record = db.query(Due).filter(Due.order_id == order.id, Due.amount > 0).first()
+        is_paid = due_record is None
+    
+    # For now, we'll set these to None since we don't have the payment breakdown info for existing orders
+    # In a real implementation, you might want to store this information with the order
+    return EnhancedOrderResponse(
+        id=order.id,
+        transaction_id=order.transaction_id,
+        date=order.date,
+        amount=order.amount,
+        details=order.details,
+        cashier_id=order.cashier_id,
+        shopper_id=order.shopper_id,
+        items=order_items_response,
+        is_paid=is_paid,
+        payment_amount=None,
+        payment_breakdown=None,
+        remaining_dues=None,
+        remaining_order_balance=None,
+        cashier=cashier_info,
+        shopper=shopper_info
     )

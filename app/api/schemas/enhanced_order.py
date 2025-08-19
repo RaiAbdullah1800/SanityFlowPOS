@@ -25,6 +25,27 @@ class EnhancedOrderCreate(BaseModel):
     payment_breakdown: Optional[PaymentBreakdown] = None
 
 
+class CashierInfo(BaseModel):
+    """Basic cashier information"""
+    id: str
+    username: str
+
+    class Config:
+        orm_mode = True
+
+
+class ShopperInfo(BaseModel):
+    """Basic shopper information"""
+    id: str
+    customer_code: str
+    name: str
+    phone_number: Optional[str] = None
+    address: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
 class EnhancedOrderResponse(BaseModel):
     """Enhanced order response with payment details"""
     id: str
@@ -40,6 +61,8 @@ class EnhancedOrderResponse(BaseModel):
     payment_breakdown: Optional[PaymentBreakdown] = None
     remaining_dues: Optional[float] = None
     remaining_order_balance: Optional[float] = None
+    cashier: Optional[CashierInfo] = None
+    shopper: Optional[ShopperInfo] = None
 
     class Config:
         orm_mode = True
