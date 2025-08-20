@@ -405,7 +405,8 @@ def process_return(
                 transaction_id=return_txn_id,
                 amount=-total_return_amount,  
                 details=f"Return for order {order.transaction_id}: {reason}",
-                cashier_id=user.id
+                cashier_id=user.id,
+                shopper_id=order.shopper_id  # Link return order to the same customer as original order
             )
             db.add(return_order)
             db.flush()  # Get the return order ID
@@ -414,6 +415,20 @@ def process_return(
             for return_item in return_order_items:
                 return_item.order_id = return_order.id
                 db.add(return_item)
+            
+            # Handle payment adjustment for return if original order had a due
+            if order.shopper_id:
+                # Check if original order had a due
+                original_due = db.query(Due).filter(Due.order_id == order.id).first()
+                if original_due and original_due.amount > 0:
+                    # Create a payment adjustment (negative due) for the return
+                    payment_adjustment = Due(
+                        shopper_id=order.shopper_id,
+                        amount=-total_return_amount,  # Negative amount for payment
+                        description=f"Return adjustment for order {order.transaction_id}. Return transaction: {return_txn_id}",
+                        order_id=return_order.id  # Link to the return order
+                    )
+                    db.add(payment_adjustment)
             
             # Add a record for the entire order return
             # Use the first item's ID as a placeholder for the order return record
@@ -568,7 +583,8 @@ def process_return(
                 transaction_id=return_txn_id,
                 amount=-total_return_amount,  
                 details=f"Partial return for order {order.transaction_id}: {reason}",
-                cashier_id=user.id
+                cashier_id=user.id,
+                shopper_id=order.shopper_id  # Link return order to the same customer as original order
             )
             db.add(return_order)
             db.flush()  # Get the return order ID
@@ -577,6 +593,20 @@ def process_return(
             for return_item in return_order_items:
                 return_item.order_id = return_order.id
                 db.add(return_item)
+            
+            # Handle payment adjustment for return if original order had a due
+            if order.shopper_id:
+                # Check if original order had a due
+                original_due = db.query(Due).filter(Due.order_id == order.id).first()
+                if original_due and original_due.amount > 0:
+                    # Create a payment adjustment (negative due) for the return
+                    payment_adjustment = Due(
+                        shopper_id=order.shopper_id,
+                        amount=-total_return_amount,  # Negative amount for payment
+                        description=f"Return adjustment for order {order.transaction_id}. Return transaction: {return_txn_id}",
+                        order_id=return_order.id  # Link to the return order
+                    )
+                    db.add(payment_adjustment)
         
         db.commit()
         
