@@ -116,17 +116,35 @@ def create_enhanced_order_for_cashier(
         previous_dues = db.query(Due).filter(Due.shopper_id == shopper_id).all()
         total_previous_dues = sum(due.amount for due in previous_dues)
         
+        # Only consider positive dues (actual debts) for validation
+        # Negative dues represent existing advance payments
+        actual_previous_dues = max(0, total_previous_dues)
+        
         # Use advance payment from payment breakdown if available, otherwise calculate it
         if not hasattr(order.payment_breakdown, 'advance_payment') or order.payment_breakdown.advance_payment is None:
-            # Calculate advance payment (when payment exceeds order total + previous dues)
+            # Calculate advance payment (when payment exceeds order total + actual previous dues)
             # Advance payment = Total payment - (Order payment + Dues payment)
             advance_payment = max(0, order.payment_amount - (order_payment + dues_payment))
         
-        if abs(remaining_dues - max(0, total_previous_dues - dues_payment)) > 0.01:
+        if abs(remaining_dues - max(0, actual_previous_dues - dues_payment)) > 0.01:
             raise HTTPException(status_code=400, detail="Remaining dues calculation is inconsistent")
         
-        if abs(remaining_order_balance - max(0, total - order_payment)) > 0.01:
+        # Account for credit usage in remaining order balance validation
+        credit_used = getattr(order.payment_breakdown, 'credit_used', 0.0)
+        expected_remaining_order_balance = max(0, total - order_payment - credit_used)
+        if abs(remaining_order_balance - expected_remaining_order_balance) > 0.01:
             raise HTTPException(status_code=400, detail="Remaining order balance calculation is inconsistent")
+        
+        # Handle advance credit usage if provided in payment breakdown
+        credit_used = getattr(order.payment_breakdown, 'credit_used', 0.0)
+        if credit_used > 0:
+            credit_usage_due = Due(
+                shopper_id=shopper_id,
+                order_id=new_order.id,
+                amount=credit_used,  # Positive to reduce the negative advance balance
+                description=f"Using advance credit for Order {next_transaction_id}"
+            )
+            db.add(credit_usage_due)
         
         # Create due records for payment toward previous dues
         if dues_payment > 0:

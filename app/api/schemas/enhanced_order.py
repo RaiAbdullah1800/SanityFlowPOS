@@ -11,8 +11,10 @@ class PaymentBreakdown(BaseModel):
     order_payment: float = Field(..., description="Amount paid toward current order")
     dues_payment: float = Field(..., description="Amount paid toward previous dues")
     advance_payment: float = Field(0.0, description="Amount paid as advance for future purchases")
+    credit_used: float = Field(0.0, description="Amount of advance credit used for this order")
     remaining_dues: float = Field(..., description="Remaining dues balance after payment")
     remaining_order_balance: float = Field(..., description="Remaining order balance after payment")
+    remaining_credit: float = Field(0.0, description="Remaining advance credit after this transaction")
 
 
 class EnhancedOrderCreate(BaseModel):
