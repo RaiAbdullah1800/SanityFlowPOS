@@ -154,13 +154,8 @@ def create_order_for_cashier(
         order_items.append(order_item)
 
         item_size.stock -= item_data.quantity
-        db.add(InventoryHistory(
-            item_id=item_data.item_id,
-            change=-item_data.quantity,
-            type=InventoryChangeType.sale,
-            description=f"Sale via cashier. Order Item ID: {order_item.id}",
-            performed_by_id=user.id
-        ))
+        # Inventory history for sales will be recorded after the order and items are persisted,
+        # to ensure we have a valid Order Item ID in the description.
 
     # Find the maximum numeric transaction ID and ensure it's at least 999
     last_numeric_id = db.query(func.max(cast(Order.transaction_id, Integer)))\
@@ -179,6 +174,16 @@ def create_order_for_cashier(
     )
     db.add(new_order)
     db.flush()
+
+    # Record inventory history entries now that OrderItem IDs exist
+    for oi in new_order.items:
+        db.add(InventoryHistory(
+            item_id=oi.item_id,
+            change=-oi.quantity,
+            type=InventoryChangeType.sale,
+            description=f"Sale via cashier. Order TXN: {new_order.transaction_id}. Order Item ID: {oi.id}. Size: {oi.size_label}",
+            performed_by_id=user.id
+        ))
 
     # Only create a due record if the customer is not paying (is_paid is False)
     if shopper_id and not order.is_paid:
