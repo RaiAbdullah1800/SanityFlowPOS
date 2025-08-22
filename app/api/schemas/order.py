@@ -21,6 +21,26 @@ class OrderItemResponse(BaseModel):
     quantity: int
     price_at_purchase: float
     discount_applied: Optional[float] = None
+    category_name: str
+
+    class Config:
+        orm_mode = True
+
+class ShopperInfo(BaseModel):
+    """Basic shopper information for order responses"""
+    id: str
+    customer_code: str
+    name: str
+    phone_number: Optional[str] = None
+    address: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+class BalanceSummary(BaseModel):
+    """Summary of customer's balances"""
+    dues_balance: float = 0.0
+    advance_balance: float = 0.0
 
 class OrderResponse(BaseModel):
     id: str
@@ -32,6 +52,8 @@ class OrderResponse(BaseModel):
     shopper_id: Optional[str] = None
     items: List[OrderItemResponse]
     has_been_returned: Optional[bool] = False
+    shopper: Optional[ShopperInfo] = None
+    balance_summary: Optional[BalanceSummary] = None
 
 class PaginatedSalesResponse(BaseModel):
     items: List[OrderResponse]

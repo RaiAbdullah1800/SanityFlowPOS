@@ -198,7 +198,7 @@ def create_enhanced_order_for_cashier(
     # Prepare order items response
     order_items_response = []
     for item in new_order.items:
-        item_details = db.query(Item).filter(Item.id == item.item_id).first()
+        item_details = db.query(Item).options(joinedload(Item.category_obj)).filter(Item.id == item.item_id).first()
         order_items_response.append(
             OrderItemResponse(
                 id=item.id,
@@ -207,7 +207,8 @@ def create_enhanced_order_for_cashier(
                 size_label=item.size_label,
                 quantity=item.quantity,
                 price_at_purchase=item.price_at_purchase,
-                discount_applied=item.discount_applied
+                discount_applied=item.discount_applied,
+                category_name=item_details.category_obj.name if item_details and item_details.category_obj else "Uncategorized"
             )
         )
     
@@ -258,7 +259,7 @@ def get_enhanced_sales_list(
     Accessible to both admin and cashier roles
     """
     orders = db.query(Order).options(
-        joinedload(Order.items).joinedload(OrderItem.item),
+        joinedload(Order.items).joinedload(OrderItem.item).joinedload(Item.category_obj),
         joinedload(Order.cashier),
         joinedload(Order.shopper)
     ).all()
@@ -291,7 +292,8 @@ def get_enhanced_sales_list(
                 size_label=item.size_label,
                 quantity=item.quantity,
                 price_at_purchase=item.price_at_purchase,
-                discount_applied=item.discount_applied
+                discount_applied=item.discount_applied,
+                category_name=item.item.category_obj.name if item.item and item.item.category_obj else "Uncategorized"
             )
             order_items.append(order_item)
         
@@ -339,7 +341,7 @@ def get_enhanced_order_by_id(
     # Get order items with item details
     order_items_response = []
     for item in order.items:
-        item_details = db.query(Item).filter(Item.id == item.item_id).first()
+        item_details = db.query(Item).options(joinedload(Item.category_obj)).filter(Item.id == item.item_id).first()
         order_items_response.append(
             OrderItemResponse(
                 id=item.id,
@@ -348,7 +350,8 @@ def get_enhanced_order_by_id(
                 size_label=item.size_label,
                 quantity=item.quantity,
                 price_at_purchase=item.price_at_purchase,
-                discount_applied=item.discount_applied
+                discount_applied=item.discount_applied,
+                category_name=item_details.category_obj.name if item_details and item_details.category_obj else "Uncategorized"
             )
         )
     
