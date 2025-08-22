@@ -69,13 +69,7 @@ def create_enhanced_order_for_cashier(
 
         # Update inventory
         item_size.stock -= item_data.quantity
-        db.add(InventoryHistory(
-            item_id=item_data.item_id,
-            change=-item_data.quantity,
-            type=InventoryChangeType.sale,
-            description=f"Sale via cashier. Order Item ID: {order_item.id}",
-            performed_by_id=user.id
-        ))
+        # Defer inventory history creation until after flush so OrderItem IDs exist
 
     # Generate transaction ID
     last_numeric_id = db.query(func.max(cast(Order.transaction_id, Integer)))\
@@ -93,6 +87,16 @@ def create_enhanced_order_for_cashier(
     )
     db.add(new_order)
     db.flush()
+
+    # Now that OrderItem IDs exist, record inventory history entries with full context
+    for oi in new_order.items:
+        db.add(InventoryHistory(
+            item_id=oi.item_id,
+            change=-oi.quantity,
+            type=InventoryChangeType.sale,
+            description=f"Sale via cashier. Order TXN: {new_order.transaction_id}. Order Item ID: {oi.id}. Size: {oi.size_label}",
+            performed_by_id=user.id
+        ))
 
     # Handle payment logic if customer code is provided
     remaining_dues = 0.0
